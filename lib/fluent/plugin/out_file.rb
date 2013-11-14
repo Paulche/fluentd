@@ -62,6 +62,14 @@ module Fluent
         conf['buffer_path'] ||= "#{@path}.*"
       end
 
+      if @compress == :gz
+        begin
+          Open3.capture3('gzip -V')
+        rescue Errno::ENOENT
+          raise ConfigError, "'gzip' utility must be in PATH for compression"
+        end
+      end
+
       super
 
       @timef = TimeFormatter.new(@time_format, @localtime)
@@ -95,8 +103,8 @@ module Fluent
           chunk.write_to(f)
         }
       when :gz
-        Zlib::GzipWriter.open(path) {|f|
-          chunk.write_to(f)
+        IO.popen('gzip', 'w', :out => [path,'w']) { |f|
+          chunk.write_to(f) 
         }
       end
 
