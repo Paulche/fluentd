@@ -23,6 +23,8 @@ module Fluent
       'gz' => :gz,
       'gzip' => :gz,
     }
+  
+    CHUNK_ID_PLACE_HOLDER = '${chunk_id}'
 
     config_param :path, :string
 
@@ -52,15 +54,15 @@ module Fluent
         raise ConfigError, "'path' parameter is required on file output"
       end
 
-      if pos = @path.index('*')
-        @path_prefix = @path[0,pos]
-        @path_suffix = @path[pos+1..-1]
-        conf['buffer_path'] ||= "#{@path}"
-      else
-        @path_prefix = @path+"."
-        @path_suffix = ".log"
-        conf['buffer_path'] ||= "#{@path}.*"
-      end
+      #if pos = @path.index('*')
+        #@path_prefix = @path[0,pos]
+        #@path_suffix = @path[pos+1..-1]
+        #conf['buffer_path'] ||= "#{@path}"
+      #else
+        #@path_prefix = @path+"."
+        #@path_suffix = ".log"
+        #conf['buffer_path'] ||= "#{@path}.*"
+      #end
 
       if @compress == :gz
         begin
@@ -81,22 +83,35 @@ module Fluent
       time_str = @timef.format(time)
       "#{time_str}\t#{tag}\t#{Yajl.dump(record)}\n"
     end
+  
+    def path_format(chunk_key)
+      Time.strptime(chunk_key, @time_slice_format).strftime(path)
+    end
+
+    def chunk_unique_id_to_str(unique_id)
+      unique_id.unpack('C*').map{|x| x.to_s(16).rjust(2,'0')}.join('')
+    end
 
     def write(chunk)
-      case @compress
+      suffix = case @compress
       when nil
-        suffix = ''
+        '.'
       when :gz
-        suffix = ".gz"
+        ".gz"
       end
+      
 
       i = 0
       begin
-        path = "#{@path_prefix}#{chunk.key}_#{i}#{@path_suffix}#{suffix}"
+	path =  if path_format(chunk.key) == @path
+		  "#{@path}.#{chunk.key}_#{i}#{suffix}"
+		else
+		  #{path_format(chunk.key)}_#{i}#{suffix}"
+		end	
         i += 1
       end while File.exist?(path)
       FileUtils.mkdir_p File.dirname(path)
-
+      
       case @compress
       when nil
         File.open(path, "a", DEFAULT_FILE_PERMISSION) {|f|
