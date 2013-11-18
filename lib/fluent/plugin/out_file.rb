@@ -41,6 +41,7 @@ module Fluent
     def initialize
       require 'zlib'
       require 'time'
+      require 'open3'
       super
     end
 
@@ -61,6 +62,14 @@ module Fluent
         @path_suffix = ".log"
         conf['buffer_path'] ||= "#{@path}.*"
       end
+      
+      if @compress == :gz
+        begin
+          Open3.capture3('gzip -V')
+        rescue Errno::ENOENT
+          raise ConfigError, "'gzip' utility must be in PATH for compression"
+        end
+      end
 
       super
 
@@ -74,13 +83,32 @@ module Fluent
       "#{time_str}\t#{tag}\t#{Yajl.dump(record)}\n"
     end
 
-    def write(chunk)
-      case @compress
-      when nil
-        suffix = ''
-      when :gz
-        suffix = ".gz"
+    def gzip_write(chunk, path)
+      IO.pipe do |r,w|
+        Kernel.fork do 
+          w.close
+          $stdin.reopen(r)
+          $stdout.reopen(File.new(path,'w'))
+          Kernel.exec('gzip')
+        end
+
+        r.close
+
+        chunk.write_to(w)
+
+        w.close
+
+        Process.wait
       end
+    end
+
+    def write(chunk)
+      suffix = case @compress
+               when nil
+                 ''
+               when :gz
+                 ".gz"
+               end
 
       i = 0
       begin
@@ -95,9 +123,7 @@ module Fluent
           chunk.write_to(f)
         }
       when :gz
-        Zlib::GzipWriter.open(path) {|f|
-          chunk.write_to(f)
-        }
+        gzip_write(chunk, path)
       end
 
       return path  # for test
