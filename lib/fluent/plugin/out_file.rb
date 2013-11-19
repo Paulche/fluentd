@@ -15,13 +15,25 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 #
+
 module Fluent
   class FileOutput < TimeSlicedOutput
     Plugin.register_output('file', self)
 
-    SUPPORTED_COMPRESS = {
-      'gz' => :gz,
+    COMPRESS_SUPPORTED = {
+      'gz'   => :gz,
       'gzip' => :gz,
+      'lzop' => :lzo
+    }
+
+    COMPRESS_EXECUTABLE = {
+      :gz  => 'gzip',
+      :lzo => 'lzop'
+    }
+
+    COMPRESS_EXTENSION = {
+      :gz  => 'gz',
+      :lzo => 'lzo'
     }
 
     config_param :path, :string
@@ -29,7 +41,7 @@ module Fluent
     config_param :time_format, :string, :default => nil
 
     config_param :compress, :default => nil do |val|
-      c = SUPPORTED_COMPRESS[val]
+      c = COMPRESS_SUPPORTED[val]
       unless c
         raise ConfigError, "Unsupported compression algorithm '#{val}'"
       end
@@ -39,8 +51,8 @@ module Fluent
     config_param :symlink_path, :string, :default => nil
 
     def initialize
-      require 'zlib'
       require 'time'
+      require 'open3'
       super
     end
 
@@ -62,11 +74,42 @@ module Fluent
         conf['buffer_path'] ||= "#{@path}.*"
       end
 
+      check_compress_method(@compress)
+
       super
 
       @timef = TimeFormatter.new(@time_format, @localtime)
 
       @buffer.symlink_path = @symlink_path if @symlink_path
+    end
+
+    def check_compress_method(method)
+      if method
+        begin
+          Open3.capture3("#{COMPRESS_EXECUTABLE[method]} -V")
+        rescue Errno::ENOENT
+          raise ConfigError, "'#{COMPRESS_EXECUTABLE[method]}' utility must be in PATH for compression"
+        end
+      end
+    end
+
+    def compressed_write(chunk, path, executable)
+      IO.pipe do |r,w|
+        Kernel.fork do 
+          w.close
+          $stdin.reopen(r)
+          $stdout.reopen(File.new(path,'w'))
+          Kernel.exec(executable)
+        end
+
+        r.close
+
+        chunk.write_to(w)
+
+        w.close
+
+        Process.wait
+      end
     end
 
     def format(tag, time, record)
@@ -75,12 +118,11 @@ module Fluent
     end
 
     def write(chunk)
-      case @compress
-      when nil
-        suffix = ''
-      when :gz
-        suffix = ".gz"
-      end
+      suffix =  if @compress
+                  ".#{COMPRESS_EXTENSION[@compress]}"
+                else
+                  ''
+                end
 
       i = 0
       begin
@@ -89,13 +131,10 @@ module Fluent
       end while File.exist?(path)
       FileUtils.mkdir_p File.dirname(path)
 
-      case @compress
-      when nil
+      if @compress
+        compressed_write(chunk, path, COMPRESS_EXECUTABLE[@compress])
+      else
         File.open(path, "a", DEFAULT_FILE_PERMISSION) {|f|
-          chunk.write_to(f)
-        }
-      when :gz
-        Zlib::GzipWriter.open(path) {|f|
           chunk.write_to(f)
         }
       end
