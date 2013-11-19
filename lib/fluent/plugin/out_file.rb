@@ -74,6 +74,10 @@ module Fluent
       "#{time_str}\t#{tag}\t#{Yajl.dump(record)}\n"
     end
 
+    def path_format(chunk, path)
+      Time.strptime(chunk.key, @time_slice_format).strftime(path)
+    end
+
     def write(chunk)
       case @compress
       when nil
@@ -84,7 +88,7 @@ module Fluent
 
       i = 0
       begin
-        path = "#{@path_prefix}#{chunk.key}_#{i}#{@path_suffix}#{suffix}"
+        path = path_format(chunk, "#{@path_prefix}#{chunk.key}_#{i}#{@path_suffix}#{suffix}")
         i += 1
       end while File.exist?(path)
       FileUtils.mkdir_p File.dirname(path)
