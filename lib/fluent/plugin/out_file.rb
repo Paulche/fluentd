@@ -95,7 +95,8 @@ module Fluent
 
     def compressed_write(chunk, path, executable)
       IO.pipe do |r,w|
-        Kernel.fork do 
+        child_pid = Kernel.fork do 
+          Process.setsid
           w.close
           $stdin.reopen(r)
           $stdout.reopen(File.new(path,'w'))
@@ -104,11 +105,16 @@ module Fluent
 
         r.close
 
-        chunk.write_to(w)
+        begin
+          chunk.write_to(w)
+        rescue Errno::EPIPE
+          Process.waitpid(child_pid)
+          raise
+        end
 
         w.close
 
-        Process.wait
+        Process.waitpid(child_pid)
       end
     end
 
