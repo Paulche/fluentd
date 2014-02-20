@@ -48,6 +48,8 @@ module Fluent
       c
     end
 
+    config_param :compress_priority, :integer, :default => nil
+
     config_param :symlink_path, :string, :default => nil
 
     def initialize
@@ -57,6 +59,8 @@ module Fluent
     end
 
     def configure(conf)
+      @compress_priority = conf['compress_priority'] if conf['compress_priority']
+
       if path = conf['path']
         @path = path
       end
@@ -97,6 +101,7 @@ module Fluent
       IO.pipe do |r,w|
         child_pid = Kernel.fork do 
           Process.setsid
+          Process.setpriority(Process::PRIO_PROCESS, 0, @compress_priority) if @compress_priority
           w.close
           $stdin.reopen(r)
           $stdout.reopen(File.new(path,'w'))
